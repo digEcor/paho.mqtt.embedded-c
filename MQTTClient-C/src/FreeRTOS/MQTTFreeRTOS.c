@@ -17,6 +17,8 @@
 
 #include "MQTTFreeRTOS.h"
 
+#define MS_TO_TICKS(ms) ((TickType_t)(ms / portTICK_PERIOD_MS))
+#define TICKS_TO_MS(ticks) ((unsigned int)(ticks * portTICK_PERIOD_MS))
 
 int ThreadStart(Thread* thread, void (*fn)(void*), void* arg)
 {
@@ -50,10 +52,42 @@ int MutexUnlock(Mutex* mutex)
 	return xSemaphoreGive(mutex->sem);
 }
 
+#if defined(MQTT_ASYNC)
+void MailboxInit(Mailbox* mailbox, unsigned int capacity, size_t msgSize)
+{
+	configASSERT(mailbox);
+
+	mailbox->handle = xQueueCreate(capacity, msgSize);
+}
+#endif
+
+#if defined(MQTT_ASYNC)
+int MailboxPost(Mailbox* mailbox, void* data, unsigned int timeout_ms)
+{
+	configASSERT(mailbox);
+	configASSERT(data);
+
+	//TODO: maybe use the timeout given by the client.
+	//conversion using portTICK_PERIOD_MS may be necessary.
+	return (int)xQueueSend(mailbox->handle, data, MS_TO_TICKS(timeout_ms));
+}
+#endif
+
+#if defined(MQTT_ASYNC)
+int MailboxRetrieve(Mailbox* mailbox, void* data, unsigned int timeout_ms)
+{
+	configASSERT(mailbox);
+	configASSERT(data);
+
+	//TODO: maybe use the timeout given by the client.
+	//conversion using portTICK_PERIOD_MS may be necessary.
+	return (int)xQueueReceive(mailbox->handle, data, MS_TO_TICKS(timeout_ms));
+}
+#endif
 
 void TimerCountdownMS(Timer* timer, unsigned int timeout_ms)
 {
-	timer->xTicksToWait = timeout_ms / portTICK_PERIOD_MS; /* convert milliseconds to ticks */
+	timer->xTicksToWait = MS_TO_TICKS(timeout_ms)
 	vTaskSetTimeOutState(&timer->xTimeOut); /* Record the time at which this function was entered. */
 }
 
@@ -67,7 +101,7 @@ void TimerCountdown(Timer* timer, unsigned int timeout)
 int TimerLeftMS(Timer* timer) 
 {
 	xTaskCheckForTimeOut(&timer->xTimeOut, &timer->xTicksToWait); /* updates xTicksToWait to the number left */
-	return (timer->xTicksToWait < 0) ? 0 : (timer->xTicksToWait * portTICK_PERIOD_MS);
+	return (timer->xTicksToWait < 0) ? 0 : (TICKS_TO_MS(timer->xTicksToWait);
 }
 
 
@@ -86,7 +120,7 @@ void TimerInit(Timer* timer)
 
 int FreeRTOS_read(Network* n, unsigned char* buffer, int len, int timeout_ms)
 {
-	TickType_t xTicksToWait = timeout_ms / portTICK_PERIOD_MS; /* convert milliseconds to ticks */
+	TickType_t xTicksToWait = MS_TO_TICKS(timeout_ms); /* convert milliseconds to ticks */
 	TimeOut_t xTimeOut;
 	int recvLen = 0;
 
@@ -112,7 +146,7 @@ int FreeRTOS_read(Network* n, unsigned char* buffer, int len, int timeout_ms)
 
 int FreeRTOS_write(Network* n, unsigned char* buffer, int len, int timeout_ms)
 {
-	TickType_t xTicksToWait = timeout_ms / portTICK_PERIOD_MS; /* convert milliseconds to ticks */
+	TickType_t xTicksToWait = MS_TO_TICKS(timeout_ms); /* convert milliseconds to ticks */
 	TimeOut_t xTimeOut;
 	int sentLen = 0;
 

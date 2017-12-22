@@ -309,27 +309,27 @@ void test1_sendAndReceive(MQTTClient* c, int qos, char* test_topic)
 	int i = 0;
 	int iterations = 50;
 	int rc;
-  int wait_seconds;
+  	int wait_seconds;
 
 	MyLog(LOGA_DEBUG, "%d messages at QoS %d", iterations, qos);
-  memset(&pubmsg, '\0', sizeof(pubmsg));
+  	memset(&pubmsg, '\0', sizeof(pubmsg));
 	pubmsg.payload = "a much longer message that we can shorten to the extent that we need to payload up to 11";
 	pubmsg.payloadlen = 11;
 	pubmsg.qos = qos;
 	pubmsg.retained = 0;
-  pubmsg.dup = 0;
+  	pubmsg.dup = 0;
 
 	for (i = 0; i < iterations; ++i)
 	{
-    test1_message_data = NULL;
+    	test1_message_data = NULL;
 		rc = MQTTPublish(c, test_topic, &pubmsg);
 		assert("Good rc from publish", rc == SUCCESS, "rc was %d", rc);
 
-    /* wait for the message to be received */
-    wait_seconds = 10;
+    	/* wait for the message to be received */
+    	wait_seconds = 10;
 		while ((test1_message_data == NULL) && (wait_seconds-- > 0))
 		{
-      MQTTYield(c, 100);
+    		MQTTYield(c, 100);
 		}
 		assert("Message Arrived", wait_seconds > 0, "Time out waiting for message %d\n", i);
 
@@ -338,11 +338,11 @@ void test1_sendAndReceive(MQTTClient* c, int qos, char* test_topic)
 	}
 
 	/* wait to receive any outstanding messages */
-  wait_seconds = 2;
-  while (wait_seconds-- > 0)
-  {
-      MQTTYield(c, 1000);
-  }
+  	wait_seconds = 2;
+  	while (wait_seconds-- > 0)
+ 	{
+		MQTTYield(c, 1000);
+  	}
 }
 
 
@@ -416,6 +416,131 @@ exit:
 	return failures;
 }
 
+
+
+#if defined MQTT_ASYNC
+/*********************************************************************
+
+Test1a: single-threaded asynchronous client
+
+*********************************************************************/
+void test1a_sendAndReceive(MQTTClient* c, int qos, char* test_topic)
+{
+	char* topicName = NULL;
+	int topicLen;
+	int i = 0;
+	int iterations = 50;
+	int rc;
+  	int wait_seconds;
+
+	MyLog(LOGA_DEBUG, "%d messages at QoS %d", iterations, qos);
+  	memset(&pubmsg, '\0', sizeof(pubmsg));
+	pubmsg.payload = "a much longer message that we can shorten to the extent that we need to payload up to 11";
+	pubmsg.payloadlen = 11;
+	pubmsg.qos = qos;
+	pubmsg.retained = 0;
+  	pubmsg.dup = 0;
+
+	for (i = 0; i < iterations; ++i)
+	{
+   		test1_message_data = NULL;
+		rc = MQTTPublish(c, test_topic, &pubmsg);
+		assert("Good rc from publish", rc == SUCCESS, "rc was %d", rc);
+
+	    /* wait for the message to be received */
+	    wait_seconds = 10;
+		while ((test1_message_data == NULL) && (wait_seconds-- > 0))
+		{
+		    MQTTYield(c, 100);
+		}
+		assert("Message Arrived", wait_seconds > 0, "Time out waiting for message %d\n", i);
+
+		if (!test1_message_data)
+			printf("No message received within timeout period\n");
+	}
+
+	/* wait to receive any outstanding messages */
+	wait_seconds = 2;
+	while (wait_seconds-- > 0)
+	{
+		MQTTYield(c, 1000);
+	}
+}
+#endif
+
+#if defined(MQTT_ASYNC)
+int test1a(struct Options options)
+{
+	int subsqos = 2;
+	Network n;
+	MQTTClient c;
+	int rc = 0;
+	char* test_topic = "C client test1a";
+	MQTTPacket_willOptions wopts;
+	unsigned char buf[100];
+	unsigned char readbuf[100];
+
+	printf("test1\n");
+	fprintf(xml, "<testcase classname=\"test1a\" name=\"single threaded asynchronous client using receive\"");
+	global_start_time = start_clock();
+	failures = 0;
+	MyLog(LOGA_INFO, "Starting test 1a - single threaded asynchronous client using receive");
+
+	NetworkInit(&n);
+	NetworkConnect(&n, options.host, options.port);
+	MQTTClientInit(&c, &n, 1000, buf, 100, readbuf, 100);
+
+	MQTTPacket_connectData data = MQTTPacket_connectData_initializer;
+	data.willFlag = 1;
+	data.MQTTVersion = options.MQTTVersion;
+	data.clientID.cstring = "single-threaded-test";
+	data.username.cstring = "testuser";
+	data.password.cstring = "testpassword";
+
+	data.keepAliveInterval = 20;
+	data.cleansession = 1;
+
+	data.will.message.cstring = "will message";
+	data.will.qos = 1;
+	data.will.retained = 0;
+	data.will.topicName.cstring = "will topic";
+
+	MyLog(LOGA_DEBUG, "Connecting");
+	rc = MQTTConnect(&c, &data);
+	assert("Good rc from connect", rc == SUCCESS, "rc was %d", rc);
+	if (rc != SUCCESS)
+		goto exit;
+
+	rc = MQTTAsyncSubscribe(&c, test_topic, subsqos, messageArrived);
+	MQTTYield(&c, 100);	    /* wait for the subscribe to be processed */
+	//TODO: Deferred return value?
+	assert("Good rc from subscribe", rc == SUCCESS, "rc was %d", rc);
+
+	test1a_sendAndReceive(&c, 0, test_topic);
+	test1a_sendAndReceive(&c, 1, test_topic);
+	test1a_sendAndReceive(&c, 2, test_topic);
+
+	MyLog(LOGA_DEBUG, "Stopping\n");
+
+	rc = MQTTUnsubscribe(&c, test_topic);
+	assert("Unsubscribe successful", rc == SUCCESS, "rc was %d", rc);
+	rc = MQTTDisconnect(&c);
+	assert("Disconnect successful", rc == SUCCESS, "rc was %d", rc);
+
+	/* Just to make sure we can connect again */
+  	NetworkConnect(&n, options.host, options.port);
+  	rc = MQTTConnect(&c, &data);
+	assert("Connect successful",  rc == SUCCESS, "rc was %d", rc);
+	rc = MQTTDisconnect(&c);
+	assert("Disconnect successful", rc == SUCCESS, "rc was %d", rc);
+
+exit:
+	MyLog(LOGA_INFO, "TEST1: test %s. %d tests run, %d failures.",
+			(failures == 0) ? "passed" : "failed", tests, failures);
+	write_test_result();
+	return failures;
+}
+#endif
 
 /*********************************************************************
 
@@ -1020,13 +1145,23 @@ exit:
 int main(int argc, char** argv)
 {
 	int rc = 0;
+#if defined(MQTT_ASYNC)
+ 	int (*tests[])() = {NULL, test1, test1a, test2, test3};
+#else
  	int (*tests[])() = {NULL, test1, test2, test3};
+#endif
 	int i;
 
 	xml = fopen("TEST-test1.xml", "w");
 	fprintf(xml, "<testsuite name=\"test1\" tests=\"%d\">\n", (int)(ARRAY_SIZE(tests) - 1));
 
 	getopts(argc, argv);
+
+#if defined(MQTT_ASYNC)
+	MyLog(LOGA_DEBUG, "MQTT_ASYNC defined!");
+#else
+	MyLog(LOGA_DEBUG, "MQTT_ASYNC IS NOT defined!");
+#endif
 
 	for (i = 0; i < options.iterations; ++i)
 	{

@@ -16,6 +16,69 @@
  *******************************************************************************/
 
 #include "MQTTLinux.h"
+#include <time.h>
+#include <assert.h>
+
+#define MS_TO_NSEC(ms) (ms * 1000000)
+
+#if defined(MQTT_ASYNC)
+void MailboxInit(Mailbox* mailbox, unsigned int capacity, size_t msgSize)
+{
+    struct mq_attr mqa;
+ 
+ 	assert(mailbox);
+
+    mqa.mq_flags = 0;				//blocking read/write
+    mqa.mq_maxmsg = capacity;
+    mqa.mq_msgsize = msgSize;
+    mqa.mq_curmsgs = 0;
+
+    //Create the message queue with some default settings.
+    mailbox->handle = mq_open("/MQTTClientMsgQ", O_RDWR | O_CREAT, 0700, &mqa);
+}
+#endif
+
+#if defined(MQTT_ASYNC)
+// returns 0 on success, -1 on failure
+int MailboxPost(Mailbox* mailbox, void* data, unsigned int timeout_ms)
+{
+	struct mq_attr mqa;
+
+	assert(mailbox);
+	assert(data);
+
+	mq_getattr(mailbox->handle, &mqa);
+
+	//Use the timeout given by the client.
+	struct timespec ts = { 0 };
+	timespec_get(&ts, TIME_UTC);
+	ts.tv_sec += timeout_ms / 1000;
+	ts.tv_nsec += MS_TO_NSEC(timeout_ms % 1000);
+
+	return mq_timedsend(mailbox->handle, (char*)data, mqa.mq_msgsize, 0, &ts);
+}
+#endif
+
+#if defined(MQTT_ASYNC)
+// returns 0 on success, -1 on failure
+int MailboxRetrieve(Mailbox* mailbox, void* data, unsigned int timeout_ms)
+{
+	struct mq_attr mqa;
+
+	assert(mailbox);
+	assert(data);
+
+	mq_getattr(mailbox->handle, &mqa);
+
+	//Use the timeout given by the client.
+	struct timespec ts = { 0 };
+	timespec_get(&ts, TIME_UTC);
+	ts.tv_sec += timeout_ms / 1000;
+	ts.tv_nsec += MS_TO_NSEC(timeout_ms % 1000);
+
+	return mq_timedreceive(mailbox->handle, (char*)data, mqa.mq_msgsize, 0, &ts);
+}
+#endif
 
 void TimerInit(Timer* timer)
 {

@@ -23,6 +23,19 @@
 #include "semphr.h"
 #include "task.h"
 
+#if defined(MQTT_ASYNC)
+typedef struct Mailbox
+{
+  QueueHandle_t handle;
+} Mailbox;
+#endif
+
+#if defined(MQTT_ASYNC)
+void MailboxInit(Mailbox*, unsigned int, size_t);
+int MailboxPost(Mailbox*, void* data, unsigned int);
+int MailboxRetrieve(Mailbox*, void* data, unsigned int);
+#endif
+
 typedef struct Timer 
 {
 	TickType_t xTicksToWait;

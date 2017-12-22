@@ -25,6 +25,7 @@ set(CMAKE_SCRIPTS "${CMAKE_SOURCE_DIR}/cmake")
 set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/modules")
 
 ## build settings
+option(MQTT_ASYNC "Asynchronous MQTT Client" ON)
 set(PAHO_VERSION_MAJOR 1)
 set(PAHO_VERSION_MINOR 0)
 set(PAHO_VERSION_PATCH 0)

@@ -20,6 +20,34 @@
 #include <stdio.h>
 #include <string.h>
 
+#if defined(MQTT_ASYNC)
+typedef enum PubSubAction
+{
+    PubSubAction_SUBSCRIBE,
+    PubSubAction_UNSUBSCRIBE,
+    PubSubAction_PUBLISH,
+} PubSubAction;
+
+typedef struct PubSubRequest
+{
+    PubSubAction action;
+    const char* topic;  //NOTE: topic = NULL is used to indicate a vacancy in the list.
+    enum QoS qos;
+    union
+    {
+        struct
+        {
+            void *payload;
+            size_t payloadlen;
+        } pub;
+        struct
+        {
+            messageHandler messageHandler;
+        } sub;
+    };
+} PubSubRequest;
+#endif
+
 static void NewMessageData(MessageData* md, MQTTString* aTopicName, MQTTMessage* aMessage) {
     md->topicName = aTopicName;
     md->message = aMessage;
@@ -62,6 +90,10 @@ void MQTTClientInit(MQTTClient* c, Network* network, unsigned int command_timeou
 
     for (i = 0; i < MAX_MESSAGE_HANDLERS; ++i)
         c->messageHandlers[i].topicFilter = 0;
+#if defined(MQTT_ASYNC)
+    for(i = 0; i < MAX_PENDING_TRANSACTIONS; ++i)
+        c->pendingTransactions[i].req.topic = 0;
+#endif
     c->command_timeout_ms = command_timeout_ms;
     c->buf = sendbuf;
     c->buf_size = sendbuf_size;
@@ -71,11 +103,13 @@ void MQTTClientInit(MQTTClient* c, Network* network, unsigned int command_timeou
     c->cleansession = 0;
     c->ping_outstanding = 0;
     c->defaultMessageHandler = NULL;
-	  c->next_packetid = 1;
+	c->next_packetid = 1;
     TimerInit(&c->last_sent);
     TimerInit(&c->last_received);
 #if defined(MQTT_TASK)
-	  MutexInit(&c->mutex);
+	MutexInit(&c->mutex);
+#elif defined(MQTT_ASYNC)
+    MailboxInit(&c->mailbox, MAILBOX_CAPACITY, sizeof(PubSubRequest));
 #endif
 }
 
@@ -254,6 +288,92 @@ void MQTTCloseSession(MQTTClient* c)
 }
 
 
+#if defined(MQTT_ASYNC)
+//Finds a transaction with the specified packet ID.
+//Returns the index if found, -1 otherwise.
+int MQTTFindTransaction(MQTTClient* c, int packetid)
+{
+    int i;
+    for (i = 0; i < MAX_PENDING_TRANSACTIONS; ++i)
+    {
+        if (c->pendingTransactions[i].req.topic != NULL && 
+            c->pendingTransactions[i].packetid == packetid)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+#endif
+
+#ifdef MQTT_ASYNC
+int MQTTPubackHandler(MQTTClient* c)
+{
+    int rc = FAILURE;
+    unsigned short mypacketid;
+    unsigned char dup, type;
+
+    if (MQTTDeserialize_ack(&type, &dup, &mypacketid, c->readbuf, c->readbuf_size) != 1)
+        rc = FAILURE;
+    {
+        int i;
+        if ((i = MQTTFindTransaction(c, mypacketid)) != -1)
+        {
+            //TODO: If we want to implement a deferred return-value, this is where we should callback.
+
+            c->pendingTransactions[i].packetid = 0;
+            c->pendingTransactions[i].req.topic = 0;
+            c->pendingTransactions[i].req.qos = 0;
+            c->pendingTransactions[i].req.sub.messageHandler = 0;
+
+            rc = SUCCESS;
+        }
+        else
+        {
+            ; //TODO: We weren't expecting this PUBACK. We should log it and continue.
+        }
+    }
+
+    return rc;
+}
+#endif
+
+#ifdef MQTT_ASYNC
+int MQTTSubackHandler(MQTTClient* c)
+{
+    int rc = FAILURE;
+
+    int count = 0;
+    unsigned short mypacketid;
+    MQTTSubackData data;
+    data.grantedQoS = QOS0;
+    if (MQTTDeserialize_suback(&mypacketid, 1, &count, (int*)&data.grantedQoS, c->readbuf, c->readbuf_size) == 1)
+    {
+        int i;
+        if ((i = MQTTFindTransaction(c, mypacketid)) != -1)
+        {
+            //Complete the subscription
+            MQTTSetMessageHandler(c, c->pendingTransactions[i].req.topic, c->pendingTransactions[i].req.sub.messageHandler);
+
+            //TODO: If we want to implement a deferred return-value, this is where we should callback.
+
+            c->pendingTransactions[i].packetid = 0;
+            c->pendingTransactions[i].req.topic = 0;
+            c->pendingTransactions[i].req.qos = 0;
+            c->pendingTransactions[i].req.sub.messageHandler = 0;
+
+            rc = SUCCESS;
+        }
+        else
+        {
+            ; //TODO: We weren't expecting this SUBACK. We should log it and continue.
+        }
+    }
+
+    return rc;
+}
+#endif
+
 int cycle(MQTTClient* c, Timer* timer)
 {
     int len = 0,
@@ -270,8 +390,17 @@ int cycle(MQTTClient* c, Timer* timer)
         case 0: /* timed out reading packet */
             break;
         case CONNACK:
+            break;
         case PUBACK:
+#if defined(MQTT_ASYNC)
+            MQTTPubackHandler(c);
+#endif
+            break;
         case SUBACK:
+#if defined(MQTT_ASYNC)
+            MQTTSubackHandler(c);
+#endif
+            break;
         case UNSUBACK:
             break;
         case PUBLISH:
@@ -329,6 +458,35 @@ int cycle(MQTTClient* c, Timer* timer)
         rc = FAILURE;
     }
 
+#if 0 /* TODO: enable for incomplete Mailbox feature */
+#if defined(MQTT_ASYNC)
+    PubSubRequest req;
+    if(MailboxRetrieve(&c->mailbox, &req, TimerLeftMS(timer)))
+    {
+        switch(req.action)
+        {
+            case PubSubAction_SUBSCRIBE:
+                return MQTTSubscribe(c, req.topic, req.qos, req.sub.messageHandler);
+            case PubSubAction_UNSUBSCRIBE:
+                return FAILURE;  //TODO: impl
+            case PubSubAction_PUBLISH:
+            {
+                MQTTMessage msg;
+            	msg.payload = req.pub.payload;
+                msg.payloadlen = req.pub.payloadlen;
+                msg.qos = req.qos;
+                msg.retained = 0;    //TODO: May need to add "retained" field for pub.
+                msg.dup = 0;         //TODO: is this only used for incoming PUBLISH messages?
+                
+                return MQTTPublish(c, req.topic, &msg);
+            }
+            default:
+                rc = FAILURE;
+        }
+    }
+#endif
+#endif
+
 exit:
     if (rc == SUCCESS)
         rc = packet_type;
@@ -346,7 +504,7 @@ int MQTTYield(MQTTClient* c, int timeout_ms)
     TimerInit(&timer);
     TimerCountdownMS(&timer, timeout_ms);
 
-	  do
+    do
     {
         if (cycle(c, &timer) < 0)
         {
@@ -379,6 +537,12 @@ void MQTTRun(void* parm)
 	}
 }
 
+int MQTTIsRawPayload(const void *pl, size_t len)
+{
+    // assert(pl);  //TODO: implement assertion policy
+
+    return (len != 0) && (strlen((const char*)pl) != len);
+}
 
 #if defined(MQTT_TASK)
 int MQTTStartTask(MQTTClient* client)
@@ -434,6 +598,9 @@ int MQTTConnectWithResults(MQTTClient* c, MQTTPacket_connectData* options, MQTTC
         goto exit; // there was a problem
 
     // this will be a blocking call, wait for the connack
+#if defined(MQTT_ASYNC)
+    /* vvvvvv TODO: we need to store some state here for the anticipation of an ACK in the future. */
+    /* Do we need to do connections asynchronously? Maybe we should just for consistency. */
     if (waitfor(c, CONNACK, &connect_timer) == CONNACK)
     {
         data->rc = 0;
@@ -445,6 +612,20 @@ int MQTTConnectWithResults(MQTTClient* c, MQTTPacket_connectData* options, MQTTC
     }
     else
         rc = FAILURE;
+    /* ^^^^^^ TODO: Implement */
+#else
+    if (waitfor(c, CONNACK, &connect_timer) == CONNACK)
+    {
+        data->rc = 0;
+        data->sessionPresent = 0;
+        if (MQTTDeserialize_connack(&data->sessionPresent, &data->rc, c->readbuf, c->readbuf_size) == 1)
+            rc = data->rc;
+        else
+            rc = FAILURE;
+    }
+    else
+        rc = FAILURE;
+#endif
 
 exit:
     if (rc == SUCCESS)
@@ -468,13 +649,28 @@ int MQTTConnect(MQTTClient* c, MQTTPacket_connectData* options)
 }
 
 
+/*  returns the index of the message handler, if it exists. Returns -1 otherwise. */
+int MQTTFindMessageHandler(MQTTClient* c, const char* topicFilter)
+{
+    int i;
+    for(i = 0; i < MAX_MESSAGE_HANDLERS; ++i)
+    {
+        if(c->messageHandlers[i].topicFilter != NULL && strcmp(c->messageHandlers[i].topicFilter, topicFilter) == 0)
+        {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
 int MQTTSetMessageHandler(MQTTClient* c, const char* topicFilter, messageHandler messageHandler)
 {
     int rc = FAILURE;
     int i = -1;
 
     /* first check for an existing matching slot */
-    for (i = 0; i < MAX_MESSAGE_HANDLERS; ++i)
+    if((i = MQTTFindMessageHandler(c, topicFilter)) >= 0)
     {
         if (c->messageHandlers[i].topicFilter != NULL && strcmp(c->messageHandlers[i].topicFilter, topicFilter) == 0)
         {
@@ -484,7 +680,6 @@ int MQTTSetMessageHandler(MQTTClient* c, const char* topicFilter, messageHandler
                 c->messageHandlers[i].fp = NULL;
             }
             rc = SUCCESS; /* return i when adding new subscription */
-            break;
         }
     }
     /* if no existing, look for empty slot (unless we are removing) */
@@ -509,6 +704,34 @@ int MQTTSetMessageHandler(MQTTClient* c, const char* topicFilter, messageHandler
     return rc;
 }
 
+#if defined(MQTT_ASYNC)
+//Finds an empty space in the pending transactions list.
+//Returns the index if found, -1 otherwise.
+int MQTTFindTransactionVacancy(MQTTClient* c)
+{
+    int i;
+    for (i = 0; i < MAX_PENDING_TRANSACTIONS; ++i)
+    {
+        if (c->pendingTransactions[i].req.topic == NULL)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+#endif
+
+#if defined(MQTT_ASYNC)
+int MQTTAsyncSubscribe(MQTTClient* client, const char* topicFilter, enum QoS qos, messageHandler messageHandler)
+{
+    PubSubRequest req;
+    req.action = PubSubAction_SUBSCRIBE;
+    req.topic = topicFilter;
+    req.qos = qos;
+    req.sub.messageHandler = messageHandler;
+    MailboxPost(&client->mailbox, &req, client->command_timeout_ms);
+}
+#endif
 
 int MQTTSubscribeWithResults(MQTTClient* c, const char* topicFilter, enum QoS qos,
        messageHandler messageHandler, MQTTSubackData* data)
@@ -516,6 +739,7 @@ int MQTTSubscribeWithResults(MQTTClient* c, const char* topicFilter, enum QoS qo
     int rc = FAILURE;
     Timer timer;
     int len = 0;
+    int id;
     MQTTString topic = MQTTString_initializer;
     topic.cstring = (char *)topicFilter;
 
@@ -528,12 +752,28 @@ int MQTTSubscribeWithResults(MQTTClient* c, const char* topicFilter, enum QoS qo
     TimerInit(&timer);
     TimerCountdownMS(&timer, c->command_timeout_ms);
 
-    len = MQTTSerialize_subscribe(c->buf, c->buf_size, 0, getNextPacketId(c), 1, &topic, (int*)&qos);
+    id = getNextPacketId(c);
+
+#if defined(MQTT_ASYNC)
+    int vacancy;
+    if ((vacancy = MQTTFindTransactionVacancy(c)) != -1)
+        rc = SUCCESS;
+    else
+        goto exit;
+#endif
+
+    len = MQTTSerialize_subscribe(c->buf, c->buf_size, 0, id, 1, &topic, (int*)&qos);
     if (len <= 0)
         goto exit;
     if ((rc = sendPacket(c, len, &timer)) != SUCCESS) // send the subscribe packet
         goto exit;             // there was a problem
 
+#if defined(MQTT_ASYNC)
+    c->pendingTransactions[vacancy].packetid = id;
+    c->pendingTransactions[vacancy].req.topic = topicFilter;
+    c->pendingTransactions[vacancy].req.qos = qos;
+    c->pendingTransactions[vacancy].req.sub.messageHandler = messageHandler;
+#else
     if (waitfor(c, SUBACK, &timer) == SUBACK)      // wait for suback
     {
         int count = 0;
@@ -541,12 +781,13 @@ int MQTTSubscribeWithResults(MQTTClient* c, const char* topicFilter, enum QoS qo
         data->grantedQoS = QOS0;
         if (MQTTDeserialize_suback(&mypacketid, 1, &count, (int*)&data->grantedQoS, c->readbuf, c->readbuf_size) == 1)
         {
-            if (data->grantedQoS != 0x80)
+            if (data->grantedQoS != SUBFAIL)
                 rc = MQTTSetMessageHandler(c, topicFilter, messageHandler);
         }
     }
     else
         rc = FAILURE;
+#endif
 
 exit:
     if (rc == FAILURE)
@@ -588,6 +829,10 @@ int MQTTUnsubscribe(MQTTClient* c, const char* topicFilter)
     if ((rc = sendPacket(c, len, &timer)) != SUCCESS) // send the subscribe packet
         goto exit; // there was a problem
 
+#if defined(MQTT_ASYNC)
+    /*TODO: we need to store some state here for the anticipation of an ACK in the future. */
+    MQTTSetMessageHandler(c, topicFilter, NULL);
+#else
     if (waitfor(c, UNSUBACK, &timer) == UNSUBACK)
     {
         unsigned short mypacketid;  // should be the same as the packetid above
@@ -599,6 +844,7 @@ int MQTTUnsubscribe(MQTTClient* c, const char* topicFilter)
     }
     else
         rc = FAILURE;
+#endif
 
 exit:
     if (rc == FAILURE)
@@ -617,28 +863,49 @@ int MQTTPublish(MQTTClient* c, const char* topicName, MQTTMessage* message)
     MQTTString topic = MQTTString_initializer;
     topic.cstring = (char *)topicName;
     int len = 0;
+    int id;
 
 #if defined(MQTT_TASK)
-	  MutexLock(&c->mutex);
+    MutexLock(&c->mutex);
 #endif
-	  if (!c->isconnected)
-		    goto exit;
+    if (!c->isconnected)
+        goto exit;
 
     TimerInit(&timer);
     TimerCountdownMS(&timer, c->command_timeout_ms);
 
+#if defined(MQTT_ASYNC)
+    int vacancy;
+#endif
     if (message->qos == QOS1 || message->qos == QOS2)
+    {
+    #if defined(MQTT_ASYNC)
+        if ((vacancy = MQTTFindTransactionVacancy(c)) != -1)
+            rc = SUCCESS;
+        else
+            goto exit;
+    #endif
+
         message->id = getNextPacketId(c);
+    }
 
     len = MQTTSerialize_publish(c->buf, c->buf_size, 0, message->qos, message->retained, message->id,
               topic, (unsigned char*)message->payload, message->payloadlen);
     if (len <= 0)
         goto exit;
-    if ((rc = sendPacket(c, len, &timer)) != SUCCESS) // send the subscribe packet
+    if ((rc = sendPacket(c, len, &timer)) != SUCCESS) // send the publish packet
         goto exit; // there was a problem
 
     if (message->qos == QOS1)
     {
+#if defined(MQTT_ASYNC)
+        c->pendingTransactions[vacancy].packetid = message->id;
+        c->pendingTransactions[vacancy].req.action = PubSubAction_PUBLISH;
+        c->pendingTransactions[vacancy].req.topic = topicName;
+        c->pendingTransactions[vacancy].req.qos = message->qos;
+        c->pendingTransactions[vacancy].req.pub.payload = message->payload;
+        c->pendingTransactions[vacancy].req.pub.payloadlen = message->payloadlen;
+#else
         if (waitfor(c, PUBACK, &timer) == PUBACK)
         {
             unsigned short mypacketid;
@@ -648,9 +915,12 @@ int MQTTPublish(MQTTClient* c, const char* topicName, MQTTMessage* message)
         }
         else
             rc = FAILURE;
+#endif
     }
     else if (message->qos == QOS2)
     {
+#if defined(MQTT_ASYNC)
+        /* vvvvvv TODO: we need to store some state here for the anticipation of an ACK in the future. */
         if (waitfor(c, PUBCOMP, &timer) == PUBCOMP)
         {
             unsigned short mypacketid;
@@ -660,6 +930,18 @@ int MQTTPublish(MQTTClient* c, const char* topicName, MQTTMessage* message)
         }
         else
             rc = FAILURE;
+        /* ^^^^^^ TODO: Implement */
+#else
+        if (waitfor(c, PUBCOMP, &timer) == PUBCOMP)
+        {
+            unsigned short mypacketid;
+            unsigned char dup, type;
+            if (MQTTDeserialize_ack(&type, &dup, &mypacketid, c->readbuf, c->readbuf_size) != 1)
+                rc = FAILURE;
+        }
+        else
+            rc = FAILURE;
+#endif
     }
 
 exit:

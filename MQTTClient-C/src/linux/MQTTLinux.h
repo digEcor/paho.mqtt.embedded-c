@@ -45,6 +45,18 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+#include <mqueue.h>
+
+typedef struct Mailbox
+{
+  mqd_t handle;
+} Mailbox;
+
+#if defined(MQTT_ASYNC)
+void MailboxInit(Mailbox*, unsigned int, size_t);
+int MailboxPost(Mailbox*, void* data, unsigned int);
+int MailboxRetrieve(Mailbox*, void* data, unsigned int);
+#endif
 
 typedef struct Timer
 {

@@ -51,10 +51,22 @@
 #define MAX_MESSAGE_HANDLERS 5 /* redefinable - how many subscriptions do you want? */
 #endif
 
+#if !defined(MAX_PENDING_TRANSACTIONS)
+#define MAX_PENDING_TRANSACTIONS 5 /* redefinable - how many asynchronous operations are allowed simultaneously? */
+#endif
+
+#if !defined(MAILBOX_CAPACITY)
+/* How many concurrent messages are allowed?
+This can be overridden in MQTTCLIENT_PLATFORM_HEADER. */
+#define MAILBOX_CAPACITY     10
+#endif
+
 enum QoS { QOS0, QOS1, QOS2, SUBFAIL=0x80 };
 
 /* all failure return codes must be negative */
 enum returnCode { BUFFER_OVERFLOW = -2, FAILURE = -1, SUCCESS = 0 };
+
+//TODO: The documentation for these interfaces is lacking - the interface should be well-defined, so why not doxygen comment it?
 
 /* The Platform specific header must define the Network and Timer structures and functions
  * which operate on them.
@@ -64,6 +76,21 @@ typedef struct Network
 	int (*mqttread)(Network*, unsigned char* read_buffer, int, int);
 	int (*mqttwrite)(Network*, unsigned char* send_buffer, int, int);
 } Network;*/
+
+#if defined(MQTT_ASYNC)
+/* Mailboxes are used as an interface to MQTTClient, which reduces
+direct calls into the Paho library. The problem with this is the callback
+interface, which will not work across processes under a real operating
+system. The callback model only works in an embedded RTOS application
+because address space is shared. TODO: If we use mailboxes, they should
+be used for both input and output (need to think about this). */
+/* The Mailbox structure must be defined in the platform specific header,
+ * and have the following functions to operate on it. */
+extern void MailboxInit(Mailbox*, unsigned int, size_t msgSize);
+extern int MailboxPost(Mailbox*, void* data, unsigned int timeout_ms);
+extern int MailboxRetrieve(Mailbox*, void* data, unsigned int timeout_ms);
+extern int MailboxPeek(Mailbox*, void* data, unsigned int timeout_ms);
+#endif
 
 /* The Timer structure must be defined in the platform specific header,
  * and have the following functions to operate on it.  */
@@ -102,6 +129,48 @@ typedef struct MQTTSubackData
 
 typedef void (*messageHandler)(MessageData*);
 
+typedef struct MQTTPayload
+{
+    union
+    {
+        char *cstr;
+        struct
+        {
+            char *raw;
+            size_t len;
+        };
+    };
+} MQTTPayload;
+
+typedef enum PubSubAction
+{
+    Action_Subscribe,
+    Action_Unsubscribe,
+    Action_Publish
+} PubSubAction;
+
+/*typedef int SubHandle;*/
+
+typedef struct PubSubRequest
+{
+    PubSubAction action;
+    char *topic;
+    enum QoS qos;
+    union
+    {
+        struct
+        {
+            MQTTPayload payload;
+        } pub;
+        struct
+        {
+            /* SubHandle handle; */
+            messageHandler callback;
+        } sub;
+    };
+    
+} PubSubRequest;
+
 typedef struct MQTTClient
 {
     unsigned int next_packetid,
@@ -121,6 +190,18 @@ typedef struct MQTTClient
         void (*fp) (MessageData*);
     } messageHandlers[MAX_MESSAGE_HANDLERS];      /* Message handlers are indexed by subscription topic */
 
+#if defined(MQTT_ASYNC)
+    struct
+    {
+        int packetid;
+        /*const char* topic;
+        enum QoS qos;
+        void (*fp) (MessageData*);*/
+        //COME BACK HERE
+        PubSubRequest req;
+    } pendingTransactions[MAX_PENDING_TRANSACTIONS];
+#endif
+
     void (*defaultMessageHandler) (MessageData*);
 
     Network* ipstack;
@@ -128,6 +209,9 @@ typedef struct MQTTClient
 #if defined(MQTT_TASK)
     Mutex mutex;
     Thread thread;
+#endif
+#if defined(MQTT_ASYNC)
+    Mailbox mailbox;
 #endif
 } MQTTClient;
 
@@ -175,13 +259,28 @@ DLLExport int MQTTPublish(MQTTClient* client, const char*, MQTTMessage*);
  */
 DLLExport int MQTTSetMessageHandler(MQTTClient* c, const char* topicFilter, messageHandler messageHandler);
 
+
+#if defined(MQTT_ASYNC)
+/** MQTT Asynchronous Subscribe - send an MQTT subscribe packet and return immediately.
+ *  @param client - the client object to use
+ *  @param topicFilter - the topic filter to subscribe to
+ *  @param qos - the quality of service level to use for the subscription
+ *  @param messageHandler - the callback function to handle subscription updates on this topic
+ *  @return success code
+ */
+DLLExport int MQTTAsyncSubscribe(MQTTClient* client, const char* topicFilter, enum QoS, messageHandler);
+#endif
+
+
+
 /** MQTT Subscribe - send an MQTT subscribe packet and wait for suback before returning.
  *  @param client - the client object to use
  *  @param topicFilter - the topic filter to subscribe to
- *  @param message - the message to send
+ *  @param qos - the quality of service level to use for the subscription
+ *  @param messageHandler - the callback function to handle subscription updates on this topic
  *  @return success code
  */
-DLLExport int MQTTSubscribe(MQTTClient* client, const char* topicFilter, enum QoS, messageHandler);
+DLLExport int MQTTSubscribe(MQTTClient* client, const char* topicFilter, enum QoS qos, messageHandler messageHandler);
 
 /** MQTT Subscribe - send an MQTT subscribe packet and wait for suback before returning.
  *  @param client - the client object to use
@@ -220,6 +319,14 @@ DLLExport int MQTTIsConnected(MQTTClient* client)
 {
   return client->isconnected;
 }
+
+/**
+ * Tests a payload's contents to discriminate between raw bytes and zero-terminated strings.
+ * @param pl Address containing the payload data
+ * @param len the length of the payload data, in bytes
+ * @return 0 if the payload data contains raw bytes.
+ */
+DLLExport int MQTTIsRawPayload(const void *pl, size_t len);
 
 #if defined(MQTT_TASK)
 /** MQTT start background thread for a client.  After this, MQTTYield should not be called.
