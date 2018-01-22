@@ -1,0 +1,11 @@
+{
+    "files.associations": {
+        "mqttclient.h": "c",
+        "type_traits": "c",
+        "mqttfreertos.h": "c",
+        "mqttlinux.h": "c",
+        "time.h": "c",
+        "malloc.h": "c",
+        "stdlib.h": "c"
+    }
+}
