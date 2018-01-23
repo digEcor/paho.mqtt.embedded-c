@@ -366,10 +366,10 @@ int MQTTPublishHandler(MQTTClient *c, Timer *timer)
     return rc;
 }
 
-#ifdef MQTT_ASYNC
 int MQTTPubAckHandler(MQTTClient* c)
 {
     int rc = FAILURE;
+#ifdef MQTT_ASYNC
     unsigned short mypacketid;
     unsigned char dup, type;
     int i;
@@ -410,15 +410,18 @@ int MQTTPubAckHandler(MQTTClient* c)
     {
         printf("Unexpected PUBACK refers to non-existent transaction (%d).\n", mypacketid);
     }
+#else
+    //Does nothing if MQTT_ASYNC is undefined
+    rc = SUCCESS;
+#endif
 
     return rc;
 }
-#endif
 
-#ifdef MQTT_ASYNC
 int MQTTPubRecHandler(MQTTClient *c, Timer *timer)
 {
     int rc = FAILURE;
+#ifdef MQTT_ASYNC
     unsigned short mypacketid;
     unsigned char dup, type;
     int len = 0;
@@ -458,20 +461,23 @@ int MQTTPubRecHandler(MQTTClient *c, Timer *timer)
     {
         printf("Unexpected PUBREC refers to non-existent transaction (%d).\n", mypacketid);
     }
+#else
+    //Does nothing if MQTT_ASYNC is undefined
+    rc = SUCCESS;
+#endif
 
     return rc;
 }
-#endif
 
-#ifdef MQTT_ASYNC
 int MQTTPubRelHandler(MQTTClient *c, Timer *timer)
 {
     int rc = FAILURE;
     unsigned short mypacketid;
     unsigned char dup, type;
     int len = 0;
-    int i;
 
+#ifdef MQTT_ASYNC
+    int i;
     if (MQTTDeserialize_ack(&type, &dup, &mypacketid, c->readbuf, c->readbuf_size) != 1)
     {
         rc = FAILURE;
@@ -508,15 +514,23 @@ int MQTTPubRelHandler(MQTTClient *c, Timer *timer)
     {
         printf("Unexpected PUBREL refers to non-existent transaction (%d).\n", mypacketid);
     }
+#else
+    if (MQTTDeserialize_ack(&type, &dup, &mypacketid, c->readbuf, c->readbuf_size) == 1)
+    {
+        if ((len = MQTTSerialize_ack(c->buf, c->buf_size, (packet_type == PUBREC) ? PUBREL : PUBCOMP, 0, mypacketid)) > 0)
+        {
+            rc = sendPacket(c, len, timer); // send the PUBREL packet
+        }
+    }
+#endif
 
     return rc;
 }
-#endif
 
-#ifdef MQTT_ASYNC
 int MQTTPubCompHandler(MQTTClient *c)
 {
     int rc = FAILURE;
+#ifdef MQTT_ASYNC
     unsigned short mypacketid;
     unsigned char dup, type;
     int i;
@@ -557,15 +571,18 @@ int MQTTPubCompHandler(MQTTClient *c)
     {
         printf("Unexpected PUBCOMP refers to non-existent transaction (%d).\n", mypacketid);
     }
+#else
+    //Does nothing if MQTT_ASYNC is undefined
+    rc = SUCCESS;
+#endif
 
     return rc;
 }
-#endif
 
-#ifdef MQTT_ASYNC
 int MQTTSubAckHandler(MQTTClient* c)
 {
     int rc = FAILURE;
+#ifdef MQTT_ASYNC
 
     int count = 0;
     unsigned short mypacketid;
@@ -600,10 +617,13 @@ int MQTTSubAckHandler(MQTTClient* c)
             ; //TODO: We weren't expecting this SUBACK. We should log it and continue.
         }
     }
+#else
+    //Does nothing if MQTT_ASYNC is undefined
+    rc = SUCCESS;
+#endif
 
     return rc;
 }
-#endif
 
 int cycle(MQTTClient* c, Timer* timer)
 {
@@ -618,65 +638,46 @@ int cycle(MQTTClient* c, Timer* timer)
             /* no more data to read, unrecoverable. Or read packet fails due to unexpected network error */
             rc = packet_type;
             goto exit;
+
         case 0: /* timed out reading packet */
             break;
+
         case CONNACK:
             break;
+
         case PUBACK:
-#if defined(MQTT_ASYNC)
             rc = MQTTPubAckHandler(c);
             // printf("cycle() returning %d from MQTTPubAckHandler()\n", rc);
-#endif
             break;
+
         case SUBACK:
-#if defined(MQTT_ASYNC)
             rc = MQTTSubAckHandler(c);
             // printf("cycle() returning %d from MQTTSubAckHandler()\n", rc);
-#endif
             break;
+
         case UNSUBACK:
             break;
+
         case PUBLISH:
-        {
             rc = MQTTPublishHandler(c, timer);
             // printf("cycle() returning %d from MQTTPublishHandler()\n", rc);
             break;
-        }
+
         case PUBREC:
-#if defined(MQTT_ASYNC)
             rc = MQTTPubRecHandler(c, timer);
             // printf("cycle() returning %d from MQTTPubRecHandler()\n", rc);
             break;
-#endif
+
         case PUBREL:
-#if defined(MQTT_ASYNC)
             rc = MQTTPubRelHandler(c, timer);
             // printf("cycle() returning %d from MQTTPubRelHandler()\n", rc);
             break;
-#else
-        {
-            //TODO: Move this to PubRelHandler()
-            unsigned short mypacketid;
-            unsigned char dup, type;
-            if (MQTTDeserialize_ack(&type, &dup, &mypacketid, c->readbuf, c->readbuf_size) != 1)
-                rc = FAILURE;
-            else if ((len = MQTTSerialize_ack(c->buf, c->buf_size,
-                (packet_type == PUBREC) ? PUBREL : PUBCOMP, 0, mypacketid)) <= 0)
-                rc = FAILURE;
-            else if ((rc = sendPacket(c, len, timer)) != SUCCESS) // send the PUBREL packet
-                rc = FAILURE; // there was a problem
-            if (rc == FAILURE)
-                goto exit; // there was a problem
-            break;
-        }
-#endif
 
         case PUBCOMP:
-#if defined(MQTT_ASYNC)
             rc = MQTTPubCompHandler(c);
             // printf("cycle() returning %d from MQTTPubCompHandler()\n", rc);
-#endif
             break;
+
         case PINGRESP:
             c->ping_outstanding = 0;
             break;
