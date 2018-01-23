@@ -391,8 +391,11 @@ int test1(struct Options options)
 	rc = MQTTSubscribe(&c, test_topic, subsqos, messageArrived);
 	assert("Good rc from subscribe", rc == SUCCESS, "rc was %d", rc);
 
+	printf("[1]: QOS0\n");
 	test1_sendAndReceive(&c, 0, test_topic);
+	printf("[1]: QOS1\n");
 	test1_sendAndReceive(&c, 1, test_topic);
+	printf("[1]: QOS2\n");
 	test1_sendAndReceive(&c, 2, test_topic);
 
 	MyLog(LOGA_DEBUG, "Stopping\n");
@@ -444,7 +447,7 @@ void test1a_sendAndReceive(MQTTClient* c, int qos, char* test_topic)
 	for (i = 0; i < iterations; ++i)
 	{
    		test1_message_data = NULL;
-		rc = MQTTPublish(c, test_topic, &pubmsg);
+		rc = MQTTPublish(c, test_topic, &pubmsg);		//TODO: async pub
 		assert("Good rc from publish", rc == SUCCESS, "rc was %d", rc);
 
 	    /* wait for the message to be received */
@@ -516,22 +519,25 @@ int test1a(struct Options options)
 	//TODO: Deferred return value?
 	assert("Good rc from subscribe", rc == SUCCESS, "rc was %d", rc);
 
+	printf("[1a]: QOS0\n");
 	test1a_sendAndReceive(&c, 0, test_topic);
+	printf("[1a]: QOS1\n");
 	test1a_sendAndReceive(&c, 1, test_topic);
+	printf("[1a]: QOS2\n");
 	test1a_sendAndReceive(&c, 2, test_topic);
 
 	MyLog(LOGA_DEBUG, "Stopping\n");
 
-	rc = MQTTUnsubscribe(&c, test_topic);
+	rc = MQTTUnsubscribe(&c, test_topic);	//TODO: async?
 	assert("Unsubscribe successful", rc == SUCCESS, "rc was %d", rc);
-	rc = MQTTDisconnect(&c);
+	rc = MQTTDisconnect(&c);	//TODO: async?
 	assert("Disconnect successful", rc == SUCCESS, "rc was %d", rc);
 
 	/* Just to make sure we can connect again */
   	NetworkConnect(&n, options.host, options.port);
-  	rc = MQTTConnect(&c, &data);
+  	rc = MQTTConnect(&c, &data);	//TODO: async?
 	assert("Connect successful",  rc == SUCCESS, "rc was %d", rc);
-	rc = MQTTDisconnect(&c);
+	rc = MQTTDisconnect(&c);	//TODO: async?
 	assert("Disconnect successful", rc == SUCCESS, "rc was %d", rc);
 
 exit:
@@ -1158,9 +1164,9 @@ int main(int argc, char** argv)
 	getopts(argc, argv);
 
 #if defined(MQTT_ASYNC)
-	MyLog(LOGA_DEBUG, "MQTT_ASYNC defined!");
+	printf("MQTT_ASYNC is defined!\n");
 #else
-	MyLog(LOGA_DEBUG, "MQTT_ASYNC IS NOT defined!");
+	printf("MQTT_ASYNC is NOT defined!\n");
 #endif
 
 	for (i = 0; i < options.iterations; ++i)

@@ -13,7 +13,7 @@ ADD_EXECUTABLE(
 target_link_libraries(testc1 paho-embed-mqtt3cc paho-embed-mqtt3c)
 target_include_directories(testc1 PRIVATE "../src" "../src/linux")
 if(MQTT_ASYNC)
-	target_compile_definitions(testc1 PRIVATE MQTTCLIENT_PLATFORM_HEADER=MQTTLinux.h rt)
+	target_compile_definitions(testc1 PRIVATE MQTT_ASYNC MQTTCLIENT_PLATFORM_HEADER=MQTTLinux.h rt)
     target_link_libraries(testc1 rt)
 else()
 	target_compile_definitions(testc1 PRIVATE MQTTCLIENT_PLATFORM_HEADER=MQTTLinux.h)

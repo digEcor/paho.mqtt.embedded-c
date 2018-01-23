@@ -52,7 +52,7 @@
 #endif
 
 #if !defined(MAX_PENDING_TRANSACTIONS)
-#define MAX_PENDING_TRANSACTIONS 5 /* redefinable - how many asynchronous operations are allowed simultaneously? */
+#define MAX_PENDING_TRANSACTIONS 10 /* redefinable - how many asynchronous operations are allowed simultaneously? */
 #endif
 
 #if !defined(MAILBOX_CAPACITY)
@@ -142,19 +142,32 @@ typedef struct MQTTPayload
     };
 } MQTTPayload;
 
+#if defined(MQTT_ASYNC)
 typedef enum PubSubAction
 {
-    Action_Subscribe,
-    Action_Unsubscribe,
-    Action_Publish
+    PubSubAction_SUBSCRIBE,
+    PubSubAction_UNSUBSCRIBE,
+    PubSubAction_PUBLISH,
 } PubSubAction;
 
 /*typedef int SubHandle;*/
 
+typedef enum PendingAck
+{
+    PendingAck_NONE = 0,
+    PendingAck_CONNACK,     //from broker to client
+    PendingAck_PUBACK,      //from receiver of PUBLISH (QOS1)
+    PendingAck_SUBACK,      //from broker to client
+    PendingAck_UNSUBACK,    //from broker to client
+    PendingAck_PUBREC,      //from receiver of PUBLISH (QOS2)
+    PendingAck_PUBREL,      //from sender of PUBLISH (QOS2)
+    PendingAck_PUBCOMP,     //from receiver of PUBLISH (QOS2)
+} PendingAck;
+
 typedef struct PubSubRequest
 {
     PubSubAction action;
-    char *topic;
+    MQTTString topic;
     enum QoS qos;
     union
     {
@@ -170,6 +183,7 @@ typedef struct PubSubRequest
     };
     
 } PubSubRequest;
+#endif
 
 typedef struct MQTTClient
 {
@@ -186,7 +200,7 @@ typedef struct MQTTClient
 
     struct MessageHandlers
     {
-        const char* topicFilter;
+        const char *topicFilter;
         void (*fp) (MessageData*);
     } messageHandlers[MAX_MESSAGE_HANDLERS];      /* Message handlers are indexed by subscription topic */
 
@@ -194,10 +208,7 @@ typedef struct MQTTClient
     struct
     {
         int packetid;
-        /*const char* topic;
-        enum QoS qos;
-        void (*fp) (MessageData*);*/
-        //COME BACK HERE
+        PendingAck ack; //TODO: Maybe use MQTTPacket:msgTypes instead.
         PubSubRequest req;
     } pendingTransactions[MAX_PENDING_TRANSACTIONS];
 #endif
@@ -326,7 +337,7 @@ DLLExport int MQTTIsConnected(MQTTClient* client)
  * @param len the length of the payload data, in bytes
  * @return 0 if the payload data contains raw bytes.
  */
-DLLExport int MQTTIsRawPayload(const void *pl, size_t len);
+//DLLExport int MQTTIsRawPayload(const void *pl, size_t len);
 
 #if defined(MQTT_TASK)
 /** MQTT start background thread for a client.  After this, MQTTYield should not be called.

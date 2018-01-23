@@ -98,7 +98,7 @@ DLLExport int MQTTSerialize_ack(unsigned char* buf, int buflen, unsigned char ty
 DLLExport int MQTTDeserialize_ack(unsigned char* packettype, unsigned char* dup, unsigned short* packetid, unsigned char* buf, int buflen);
 
 int MQTTPacket_len(int rem_len);
-DLLExport int MQTTPacket_equals(MQTTString* a, char* b);
+DLLExport int MQTTPacket_equals(MQTTString* a, const char* b);
 
 DLLExport int MQTTPacket_encode(unsigned char* buf, int length);
 int MQTTPacket_decode(int (*getcharfn)(unsigned char*, int), int* value);

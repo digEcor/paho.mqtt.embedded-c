@@ -6,6 +6,7 @@
                 "/usr/include",
                 "/usr/local/include",
                 "${workspaceRoot}",
+                "${workspaceRoot}/MQTTPacket/src",
                 "${workspaceRoot}/MQTTClient-C/src"
             ],
             "defines": [],
@@ -14,7 +15,9 @@
                 "path": [
                     "/usr/include",
                     "/usr/local/include",
-                    "${workspaceRoot}"
+                    "${workspaceRoot}",
+                    "${workspaceRoot}/MQTTPacket/src",
+                    "${workspaceRoot}/MQTTClient-C/src"
                 ],
                 "limitSymbolsToIncludedHeaders": true,
                 "databaseFilename": ""
@@ -36,7 +39,8 @@
                 "/usr/include/x86_64-linux-gnu",
                 "/usr/include",
                 "${workspaceRoot}",
-                "${workspaceRoot}/MQTTPacket/src"
+                "${workspaceRoot}/MQTTPacket/src",
+                "${workspaceRoot}/MQTTClient-C/src"
             ],
             "defines": [
                 "MQTTCLIENT_PLATFORM_HEADER=linux/MQTTLinux.h",
@@ -54,7 +58,8 @@
                     "/usr/include/x86_64-linux-gnu",
                     "/usr/include",
                     "${workspaceRoot}",
-                    "${workspaceRoot}/MQTTPacket/src"
+                    "${workspaceRoot}/MQTTPacket/src",
+                    "${workspaceRoot}/MQTTClient-C/src"
                 ],
                 "limitSymbolsToIncludedHeaders": true,
                 "databaseFilename": ""
@@ -64,7 +69,9 @@
             "name": "Win32",
             "includePath": [
                 "C:/Program Files (x86)/Microsoft Visual Studio 14.0/VC/include",
-                "${workspaceRoot}"
+                "${workspaceRoot}",
+                "${workspaceRoot}/MQTTPacket/src",
+                "${workspaceRoot}/MQTTClient-C/src"
             ],
             "defines": [
                 "_DEBUG",
@@ -74,7 +81,9 @@
             "browse": {
                 "path": [
                     "C:/Program Files (x86)/Microsoft Visual Studio 14.0/VC/include/*",
-                    "${workspaceRoot}"
+                    "${workspaceRoot}",
+                    "${workspaceRoot}/MQTTPacket/src",
+                    "${workspaceRoot}/MQTTClient-C/src"
                 ],
                 "limitSymbolsToIncludedHeaders": true,
                 "databaseFilename": ""
@@ -94,7 +103,8 @@
                 "/usr/local/include/FreeRTOSv10.0.0",
                 "/usr/local/include/FreeRTOSv10.0.0/FreeRTOS-Plus-TCP",
                 "${workspaceRoot}",
-                "${workspaceRoot}/MQTTPacket/src"
+                "${workspaceRoot}/MQTTPacket/src",
+                "${workspaceRoot}/MQTTClient-C/src"
             ],
             "defines": [
                 "MQTTCLIENT_PLATFORM_HEADER=FreeRTOS/MQTTFreeRTOS.h",
@@ -112,7 +122,8 @@
                     "/usr/include/x86_64-linux-gnu",
                     "/usr/include",
                     "${workspaceRoot}",
-                    "${workspaceRoot}/MQTTPacket/src"
+                    "${workspaceRoot}/MQTTPacket/src",
+                    "${workspaceRoot}/MQTTClient-C/src"
                 ],
                 "limitSymbolsToIncludedHeaders": true,
                 "databaseFilename": ""
